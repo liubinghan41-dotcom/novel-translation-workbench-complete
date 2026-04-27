@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>小说翻译工作台</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <a class="brand" href="#workbench">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 36 36">
+              <path d="M7 12.5c4.8 0 8 1.4 11 4.1 3-2.7 6.2-4.1 11-4.1v16c-4.8 0-8 1.4-11 4.1-3-2.7-6.2-4.1-11-4.1v-16Z" />
+              <path d="M18 16.6v16" />
+              <path d="M13.5 9.5 15 6l1.5 3.5L20 11l-3.5 1.5L15 16l-1.5-3.5L10 11l3.5-1.5Z" />
+            </svg>
+          </span>
+          <span>小说翻译工作台</span>
+        </a>
+
+        <nav class="nav-list">
+          <a class="nav-item is-active" href="#workbench">控制台</a>
+          <a class="nav-item" href="#projectPanel">项目</a>
+          <a class="nav-item" href="#apiPanel">API</a>
+          <a class="nav-item" href="#jobPanel">任务</a>
+          <a class="nav-item" href="#presetPanel">预设</a>
+          <a class="nav-item" href="#advancedPanel">上下文</a>
+        </nav>
+
+        <section class="storage-card" aria-label="任务概览">
+          <h2>本地工作区</h2>
+          <p><strong id="sidebarBookCount">0 本</strong> / 已解析小说</p>
+          <div class="meter" aria-hidden="true"><span id="sidebarMeter"></span></div>
+          <p id="cacheStats">缓存：0 条</p>
+        </section>
+      </aside>
+
+      <main class="workspace" id="workbench">
+        <header class="topbar">
+          <div>
+            <h1>小说翻译工作台</h1>
+            <p>EPUB / TXT 分章翻译，支持断点续翻、失败重试、翻译缓存和项目保存。</p>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" type="button" id="healthButton" aria-label="服务状态">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <section class="dashboard-grid">
+          <article class="panel upload-panel" id="projectPanel">
+            <header class="panel-title">
+              <span class="step">1.</span>
+              <h2>上传与项目</h2>
+            </header>
+
+            <label class="drop-zone" id="dropZone">
+              <input id="fileInput" type="file" accept=".txt,.epub" />
+              <span class="cloud-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 1-7.87A6 6 0 0 0 6.2 9.2 4.6 4.6 0 0 0 7 18Z" /><path d="M12 17V9" /><path d="m8.8 12.2 3.2-3.2 3.2 3.2" /></svg>
+              </span>
+              <span class="drop-main">拖入小说文件，或点击上传</span>
+              <span class="upload-cta">选择文件</span>
+              <span class="drop-meta">支持 .txt / .epub</span>
+            </label>
+
+            <div class="file-row">
+              <span class="file-name" id="fileName">等待上传小说文件</span>
+              <span class="file-size" id="fileSize">-</span>
+              <span class="success-text" id="parseState">未解析</span>
+            </div>
+
+            <div class="project-row">
+              <select id="projectSelect" aria-label="已保存项目"></select>
+              <button class="outline-mini" id="loadProjectButton" type="button">加载</button>
+              <button class="outline-mini" id="saveProjectButton" type="button">保存项目</button>
+              <button class="outline-mini" id="exportProjectButton" type="button">导出项目</button>
+              <label class="outline-mini import-label">
+                导入项目
+                <input id="importProjectInput" type="file" accept=".json,application/json" />
+              </label>
+            </div>
+
+            <div class="chapter-list-wrap">
+              <div class="mini-title">
+                <span>章节列表</span>
+                <strong id="chapterCount">0</strong>
+              </div>
+              <div class="chapter-list" id="chapterList">
+                <p class="empty-note">上传或加载项目后会列出章节。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel settings-panel" id="apiPanel">
+            <header class="panel-title">
+              <span class="step">2.</span>
+              <h2>API 与翻译设置</h2>
+            </header>
+
+            <div class="settings-form">
+              <label class="field-label" for="sourceLanguage">源语言</label>
+              <select id="sourceLanguage">
+                <option value="日语" selected>日语</option>
+                <option value="英语">英语</option>
+                <option value="韩语">韩语</option>
+                <option value="自动识别">自动识别</option>
+              </select>
+
+              <label class="field-label" for="targetLanguage">目标语言</label>
+              <select id="targetLanguage">
+                <option value="中文" selected>中文</option>
+                <option value="英语">英语</option>
+                <option value="日语">日语</option>
+                <option value="韩语">韩语</option>
+              </select>
+
+              <label class="field-label" for="provider">服务商</label>
+              <select id="provider">
+                <option value="openai" selected>OpenAI 官方</option>
+                <option value="openai-compatible">OpenAI 兼容</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="gemini">Gemini</option>
+                <option value="claude">Claude</option>
+                <option value="demo">Demo 离线模式</option>
+              </select>
+
+              <label class="field-label" for="model">模型名</label>
+              <input id="model" class="text-input" value="gpt-4.1-mini" />
+
+              <label class="field-label" for="baseUrl">Base URL</label>
+              <input id="baseUrl" class="text-input wide-field" value="https://api.openai.com/v1" />
+
+              <label class="field-label" for="apiKey">API Key</label>
+              <input id="apiKey" class="text-input password-field" type="password" />
+
+              <label class="field-label" for="temperature">温度</label>
+              <div class="range-field">
+                <input id="temperature" type="range" min="0" max="1.2" value="0.35" step="0.05" />
+                <output id="temperatureValue">0.35</output>
+              </div>
+
+              <label class="field-label">章节范围</label>
+              <div class="chapter-row">
+                <select id="startChapter" aria-label="起始章节"></select>
+                <span class="range-dash">-</span>
+                <select id="endChapter" aria-label="结束章节"></select>
+                <button class="outline-mini" id="selectAllChapters" type="button">全选</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel preview-panel source-preview">
+            <header class="panel-title compact-title">
+              <span class="step">3.</span>
+              <h2>原文预览</h2>
+              <span class="count-pill" id="sourcePreviewBadge">未加载</span>
+            </header>
+            <div class="text-preview jp-text" id="sourcePreview">
+              <p>上传小说后会显示选中起始章节。</p>
+            </div>
+            <footer class="panel-foot">
+              <span id="sourceStats">共 0 章 / 约 0 字符</span>
+              <button class="text-button" id="copySourceButton" type="button">复制原文</button>
+            </footer>
+          </article>
+
+          <article class="panel preview-panel target-preview" id="resultPanel">
+            <header class="panel-title compact-title">
+              <span class="step">4.</span>
+              <h2>译文预览</h2>
+              <span class="count-pill" id="targetPreviewBadge">等待翻译</span>
+            </header>
+            <div class="text-preview cn-text" id="translatedPreview">
+              <p>开始任务后会实时追加已完成章节。</p>
+            </div>
+            <footer class="panel-foot">
+              <span id="targetStats">共 0 章 / 约 0 字符</span>
+              <button class="text-button" id="copyResultButton" type="button">复制译文</button>
+            </footer>
+          </article>
+
+          <article class="panel status-panel" id="jobPanel">
+            <header class="panel-title">
+              <span class="step">5.</span>
+              <h2>任务状态</h2>
+            </header>
+            <div class="progress-line">
+              <span>翻译进度</span>
+              <div class="progress-track" aria-hidden="true"><span id="progressFill"></span></div>
+              <strong id="progressText">0%</strong>
+            </div>
+            <dl class="status-list">
+              <div>
+                <dt>片段数量</dt>
+                <dd id="segmentCount">0</dd>
+              </div>
+              <div>
+                <dt>预计费用</dt>
+                <dd><span class="money" id="costText">$0.0000</span></dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd id="jobStatus">等待上传</dd>
+              </div>
+            </dl>
+            <div class="job-actions">
+              <button class="outline-mini" id="pauseButton" type="button">暂停</button>
+              <button class="outline-mini" id="resumeButton" type="button">继续</button>
+              <button class="outline-mini" id="retryFailedButton" type="button">重试失败</button>
+            </div>
+          </article>
+
+          <div class="action-stack">
+            <button class="primary-action" id="startButton" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z" /></svg>
+              开始翻译
+            </button>
+            <button class="outline-action" id="exportTxtButton" type="button">导出 TXT</button>
+            <button class="outline-action" id="exportEpubButton" type="button">导出 EPUB</button>
+          </div>
+
+          <article class="panel preset-panel" id="presetPanel">
+            <header class="panel-title">
+              <span class="step">6.</span>
+              <h2>文风预设</h2>
+            </header>
+            <div class="preset-grid">
+              <label>
+                <span>当前预设</span>
+                <select id="presetSelect"></select>
+              </label>
+              <label>
+                <span>预设名称</span>
+                <input id="presetName" class="text-input" />
+              </label>
+              <label>
+                <span>预设温度</span>
+                <input id="presetTemperature" class="text-input" type="number" min="0" max="1.2" step="0.05" value="0.35" />
+              </label>
+              <label class="preset-textarea">
+                <span>Prompt 模板</span>
+                <textarea id="presetPrompt" rows="8"></textarea>
+              </label>
+            </div>
+            <div class="preset-actions">
+              <button class="outline-mini" id="newPresetButton" type="button">新建预设</button>
+              <button class="outline-mini" id="savePresetButton" type="button">保存预设</button>
+              <button class="outline-mini danger" id="deletePresetButton" type="button">删除</button>
+              <label class="outline-mini import-label">
+                导入 JSON
+                <input id="presetImport" type="file" accept=".json,application/json" />
+              </label>
+              <button class="outline-mini" id="exportPresetButton" type="button">导出预设</button>
+            </div>
+          </article>
+
+          <article class="panel advanced-panel" id="advancedPanel">
+            <header class="panel-title">
+              <span class="step">7.</span>
+              <h2>上下文与执行</h2>
+            </header>
+            <div class="advanced-content">
+              <label class="wide-label">
+                <span>术语表</span>
+                <textarea id="glossary" rows="5" placeholder="每行一条，例如：霧島レン => 雾岛莲"></textarea>
+              </label>
+              <label class="wide-label">
+                <span>上下文摘要</span>
+                <textarea id="contextSummary" rows="4"></textarea>
+              </label>
+              <label class="wide-label">
+                <span>资料库 / 检索注入</span>
+                <textarea id="contextBank" rows="5" placeholder="每条资料用空行分隔。翻译时会按当前片段关键词检索相关资料注入 prompt，减少整段塞入造成的 token 浪费。"></textarea>
+              </label>
+              <div class="advanced-row compact-row">
+                <label>
+                  <span>片段字符数</span>
+                  <input id="chunkSize" class="text-input" type="number" value="1800" min="600" max="6000" step="100" />
+                </label>
+                <label>
+                  <span>失败重试次数</span>
+                  <input id="maxRetries" class="text-input" type="number" value="2" min="0" max="8" step="1" />
+                </label>
+                <label class="checkbox-line">
+                  <input id="preserveParagraphs" type="checkbox" checked />
+                  <span>保留段落结构</span>
+                </label>
+                <label class="checkbox-line">
+                  <input id="useCache" type="checkbox" checked />
+                  <span>启用翻译缓存</span>
+                </label>
+                <label class="checkbox-line">
+                  <input id="rememberApiKey" type="checkbox" />
+                  <span>在浏览器记住 API Key</span>
+                </label>
+                <label>
+                  <span>术语注入上限</span>
+                  <input id="glossaryLimit" class="text-input" type="number" value="80" min="0" max="500" step="10" />
+                </label>
+                <label>
+                  <span>资料检索条数</span>
+                  <input id="retrievalCount" class="text-input" type="number" value="5" min="0" max="20" step="1" />
+                </label>
+              </div>
+              <div class="log-box" id="logBox">日志会显示在这里。</div>
+            </div>
+          </article>
+
+          <article class="panel insight-panel" id="insightPanel">
+            <header class="panel-title">
+              <span class="step">8.</span>
+              <h2>自动检查与摘要</h2>
+            </header>
+            <div class="insight-grid">
+              <section>
+                <h3>问题检查</h3>
+                <div class="insight-list" id="qaIssueList">暂无问题。</div>
+              </section>
+              <section>
+                <h3>章节摘要</h3>
+                <div class="insight-list" id="summaryList">暂无摘要。</div>
+              </section>
+              <section>
+                <h3>一致性</h3>
+                <div class="insight-list" id="consistencyList">暂无一致性问题。</div>
+              </section>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

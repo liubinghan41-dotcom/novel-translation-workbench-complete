@@ -1,0 +1,10 @@
+data/
+node_modules/
+.env
+.env.*
+*.log
+server.out.log
+server.err.log
+dist/
+exports/
+*.epub.tmp

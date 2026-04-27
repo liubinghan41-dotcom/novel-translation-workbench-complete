@@ -1,0 +1,14 @@
+{
+  "name": "novel-translation-workbench",
+  "version": "0.2.0",
+  "private": true,
+  "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+  "description": "Local EPUB/TXT novel translation workbench with resumable jobs, retries, cache, and project persistence.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js && node --check lib/storage.js && node --check lib/cache.js && node --check lib/jobs.js && node --check lib/glossary.js && node --check lib/context-bank.js && node --check lib/qa.js && node --check lib/summaries.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
