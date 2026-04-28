@@ -15,8 +15,16 @@ const els = {
   targetLanguage: $("#targetLanguage"),
   provider: $("#provider"),
   model: $("#model"),
+  modelList: $("#modelList"),
+  refreshModelsButton: $("#refreshModelsButton"),
+  modelRefreshState: $("#modelRefreshState"),
   baseUrl: $("#baseUrl"),
   apiKey: $("#apiKey"),
+  pricingInputPer1M: $("#pricingInputPer1M"),
+  pricingCachedInputPer1M: $("#pricingCachedInputPer1M"),
+  pricingOutputPer1M: $("#pricingOutputPer1M"),
+  pricingSource: $("#pricingSource"),
+  pricingKey: $("#pricingKey"),
   temperature: $("#temperature"),
   temperatureValue: $("#temperatureValue"),
   startChapter: $("#startChapter"),
@@ -34,6 +42,11 @@ const els = {
   progressText: $("#progressText"),
   segmentCount: $("#segmentCount"),
   costText: $("#costText"),
+  actualCostText: $("#actualCostText"),
+  inputTokensText: $("#inputTokensText"),
+  outputTokensText: $("#outputTokensText"),
+  cachedInputTokensText: $("#cachedInputTokensText"),
+  cacheHitsText: $("#cacheHitsText"),
   jobStatus: $("#jobStatus"),
   startButton: $("#startButton"),
   pauseButton: $("#pauseButton"),
@@ -76,35 +89,29 @@ const els = {
   sidebarMeter: $("#sidebarMeter")
 };
 
-const providerDefaults = {
+const providerInfo = {
   "openai-compatible": {
     baseUrl: "http://localhost:11434/v1",
-    model: "qwen2.5:7b",
     note: "OpenAI 兼容格式：POST /chat/completions。"
   },
   openai: {
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-4.1-mini",
     note: "OpenAI 官方格式：POST /v1/chat/completions。"
   },
   deepseek: {
     baseUrl: "https://api.deepseek.com",
-    model: "deepseek-chat",
     note: "DeepSeek 使用 OpenAI 兼容格式。"
   },
   gemini: {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    model: "gemini-2.5-flash-lite",
     note: "Gemini 格式：POST /models/{model}:generateContent。"
   },
   claude: {
     baseUrl: "https://api.anthropic.com/v1",
-    model: "claude-3-5-haiku-latest",
     note: "Claude 格式：POST /v1/messages。"
   },
   demo: {
     baseUrl: "",
-    model: "demo-translator",
     note: "Demo 离线模式不会调用外部 API。"
   }
 };
@@ -144,7 +151,13 @@ const state = {
   chapterSummaries: [],
   consistencyIssues: [],
   isPolling: false,
-  pollTimer: null
+  pollTimer: null,
+  modelOptions: [],
+  pricingOverrides: {},
+  estimate: null,
+  estimateTimer: null,
+  estimateRequestId: 0,
+  estimateSignature: ""
 };
 
 function showToast(message) {
@@ -169,6 +182,36 @@ function formatSize(bytes) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString("zh-CN");
+}
+
+function formatMoney(value) {
+  return value == null || Number.isNaN(Number(value)) ? "未配置" : `$${Number(value).toFixed(6)}`;
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function normalizeModelId(value) {
+  return String(value || "").trim().replace(/^models\//, "").toLowerCase();
+}
+
+function currentPricingKey() {
+  return `${els.provider.value}|${normalizeBaseUrl(els.baseUrl.value)}|${normalizeModelId(els.model.value)}`;
+}
+
+function normalizePricingOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry) => entry[1] && typeof entry[1] === "object" && !Array.isArray(entry[1]))
+  );
+}
+
+function readOptionalPrice(element) {
+  const value = element?.value?.trim();
+  if (!value) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 function uid(prefix = "id") {
@@ -268,22 +311,117 @@ function estimate() {
   const chapters = getSelectedChapters();
   const chars = chapters.reduce((sum, chapter) => sum + chapter.text.length, 0);
   const chunkSize = Math.max(600, Number(els.chunkSize.value || 1800));
-  const chunks = chapters.reduce((sum, chapter) => sum + chunkText(chapter.text, chunkSize, els.preserveParagraphs.checked).length, 0);
-  const roughRates = {
-    openai: 0.0000012,
-    deepseek: 0.00000035,
-    gemini: 0.0000005,
-    claude: 0.0000022,
-    "openai-compatible": 0.0000002,
-    demo: 0
-  };
-  const cost = chars * (roughRates[els.provider.value] ?? 0.000001);
+  const segments = chapters.flatMap((chapter) => chunkText(chapter.text, chunkSize, els.preserveParagraphs.checked).map((text) => ({ text })));
   els.sourceStats.textContent = `共 ${chapters.length} 章 / 约 ${formatNumber(chars)} 字符`;
   els.targetStats.textContent = state.results.length
     ? `已生成 ${state.results.length} 章 / 约 ${formatNumber(resultText().length)} 字符`
     : `共 ${chapters.length} 章 / 约 ${formatNumber(chars)} 字符`;
-  els.segmentCount.textContent = `${chunks} 个片段`;
-  els.costText.textContent = `$${cost.toFixed(4)}`;
+  els.segmentCount.textContent = `${segments.length} 个片段`;
+  requestCostEstimate(segments);
+}
+
+function updatePricingInputsFromState() {
+  const key = currentPricingKey();
+  state.pricingOverrides = normalizePricingOverrides(state.pricingOverrides);
+  const override = state.pricingOverrides[key] || {};
+  if (els.pricingInputPer1M) els.pricingInputPer1M.value = override.inputPer1M ?? "";
+  if (els.pricingCachedInputPer1M) els.pricingCachedInputPer1M.value = override.cachedInputPer1M ?? "";
+  if (els.pricingOutputPer1M) els.pricingOutputPer1M.value = override.outputPer1M ?? "";
+  if (els.pricingKey) els.pricingKey.textContent = key;
+}
+
+function saveCurrentPricingOverride() {
+  const key = currentPricingKey();
+  if (!key.endsWith("|")) {
+    const override = {
+      inputPer1M: readOptionalPrice(els.pricingInputPer1M),
+      cachedInputPer1M: readOptionalPrice(els.pricingCachedInputPer1M),
+      outputPer1M: readOptionalPrice(els.pricingOutputPer1M)
+    };
+    if (override.inputPer1M == null && override.cachedInputPer1M == null && override.outputPer1M == null) {
+      delete state.pricingOverrides[key];
+    } else {
+      state.pricingOverrides[key] = override;
+    }
+  }
+}
+
+function renderEstimate(data) {
+  state.estimate = data || null;
+  if (!data) {
+    els.costText.textContent = "$0.000000";
+    if (els.pricingSource) els.pricingSource.textContent = "等待估算";
+    return;
+  }
+  els.costText.textContent = formatMoney(data.cost?.total);
+  if (els.pricingSource) {
+    const pricing = data.pricing || {};
+    const sourceLabel = {
+      official: "内置官方价格",
+      "override+official": "自定义覆盖",
+      override: "自定义价格",
+      free: "免费",
+      missing: "价格未配置"
+    }[pricing.source] || pricing.source || "价格未配置";
+    els.pricingSource.textContent = `${sourceLabel} · 输入 $${pricing.inputPer1M ?? "-"} / 缓存 $${pricing.cachedInputPer1M ?? "-"} / 输出 $${pricing.outputPer1M ?? "-"} 每 1M tokens`;
+  }
+}
+
+function renderBilling(billing = null) {
+  const usage = billing?.usage || {};
+  const cost = billing?.cost || {};
+  if (els.actualCostText) els.actualCostText.textContent = billing ? formatMoney(cost.total) : "$0.000000";
+  if (els.inputTokensText) els.inputTokensText.textContent = formatNumber(usage.inputTokens || 0);
+  if (els.outputTokensText) els.outputTokensText.textContent = formatNumber(usage.outputTokens || 0);
+  if (els.cachedInputTokensText) els.cachedInputTokensText.textContent = formatNumber(usage.cachedInputTokens || 0);
+  if (els.cacheHitsText) els.cacheHitsText.textContent = formatNumber(billing?.cacheHits || 0);
+}
+
+function requestCostEstimate(segments) {
+  window.clearTimeout(state.estimateTimer);
+  const requestId = ++state.estimateRequestId;
+  if (!segments.length) {
+    state.estimateSignature = "";
+    renderEstimate(null);
+    return;
+  }
+  if (!els.model.value.trim() && els.provider.value !== "demo") {
+    state.estimate = null;
+    state.estimateSignature = "";
+    els.costText.textContent = "选择模型后估算";
+    if (els.pricingSource) els.pricingSource.textContent = "等待模型 ID";
+    return;
+  }
+  const signature = JSON.stringify({
+    provider: els.provider.value,
+    baseUrl: normalizeBaseUrl(els.baseUrl.value),
+    model: normalizeModelId(els.model.value),
+    pricing: state.pricingOverrides[currentPricingKey()] || null,
+    segmentCount: segments.length,
+    chars: segments.reduce((sum, segment) => sum + String(segment.text || "").length, 0)
+  });
+  if (signature === state.estimateSignature && state.estimate) return;
+  state.estimateSignature = signature;
+  state.estimateTimer = window.setTimeout(async () => {
+    try {
+      const data = await api("/api/estimate-cost", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: els.provider.value,
+          baseUrl: els.baseUrl.value.trim(),
+          model: els.model.value.trim(),
+          pricingOverrides: state.pricingOverrides,
+          segments
+        })
+      });
+      if (requestId === state.estimateRequestId) renderEstimate(data);
+    } catch (error) {
+      if (requestId !== state.estimateRequestId) return;
+      state.estimate = null;
+      els.costText.textContent = "估算不可用";
+      if (els.pricingSource) els.pricingSource.textContent = error.message;
+    }
+  }, 280);
 }
 
 function renderChapters() {
@@ -486,6 +624,9 @@ function parseImportedPresets(raw, fileName) {
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem("novelTranslator.settings") || "{}");
+    if (saved.pricingOverrides && typeof saved.pricingOverrides === "object") {
+      state.pricingOverrides = normalizePricingOverrides(saved.pricingOverrides);
+    }
     for (const [key, value] of Object.entries(saved)) {
       if (!els[key] || key === "apiKey") continue;
       if (els[key].type === "checkbox") els[key].checked = Boolean(value);
@@ -503,6 +644,7 @@ function loadSettings() {
     els.apiKey.value = sessionKey;
   }
   els.temperatureValue.textContent = Number(els.temperature.value).toFixed(2);
+  updatePricingInputsFromState();
 }
 
 function publicConfig(config) {
@@ -523,11 +665,13 @@ function saveSettings() {
 }
 
 function currentConfig() {
+  saveCurrentPricingOverride();
   return {
     provider: els.provider.value,
     model: els.model.value.trim(),
     baseUrl: els.baseUrl.value.trim(),
     apiKey: els.apiKey.value.trim(),
+    pricingOverrides: state.pricingOverrides,
     sourceLanguage: els.sourceLanguage.value,
     targetLanguage: els.targetLanguage.value,
     temperature: Number(els.temperature.value),
@@ -547,6 +691,9 @@ function currentConfig() {
 }
 
 function applySettings(settings = {}) {
+  if (settings.pricingOverrides && typeof settings.pricingOverrides === "object") {
+    state.pricingOverrides = normalizePricingOverrides(settings.pricingOverrides);
+  }
   if (Array.isArray(settings.contextBank)) {
     els.contextBank.value = serializeContextBank(settings.contextBank);
   }
@@ -565,6 +712,7 @@ function applySettings(settings = {}) {
     renderPresetSelect();
   }
   els.temperatureValue.textContent = Number(els.temperature.value).toFixed(2);
+  updatePricingInputsFromState();
 }
 
 async function parseFile(file) {
@@ -614,13 +762,55 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-function setProviderDefaults(provider) {
-  const defaults = providerDefaults[provider];
-  if (!defaults) return;
-  els.baseUrl.value = defaults.baseUrl;
-  els.model.value = defaults.model;
-  log(defaults.note);
+function applyProviderInfo(provider) {
+  const info = providerInfo[provider];
+  if (!info) return;
+  els.baseUrl.value = info.baseUrl;
+  els.model.value = "";
+  state.modelOptions = [];
+  renderModelList([]);
+  updatePricingInputsFromState();
+  log(info.note);
   estimate();
+}
+
+function renderModelList(models = state.modelOptions) {
+  state.modelOptions = models || [];
+  if (!els.modelList) return;
+  els.modelList.innerHTML = state.modelOptions
+    .map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.label || model.id)}</option>`)
+    .join("");
+}
+
+async function refreshModelList() {
+  const provider = els.provider.value;
+  const baseUrl = els.baseUrl.value.trim();
+  const apiKey = els.apiKey.value.trim();
+  if (els.modelRefreshState) els.modelRefreshState.textContent = "刷新中...";
+  if (els.refreshModelsButton) els.refreshModelsButton.disabled = true;
+  try {
+    const data = await api("/api/models", {
+      method: "POST",
+      body: JSON.stringify({ provider, baseUrl, apiKey })
+    });
+    const models = data.models || [];
+    renderModelList(models);
+    if (!els.model.value.trim() && models.length) {
+      els.model.value = models[0].id;
+      updatePricingInputsFromState();
+      saveSettings();
+      estimate();
+    }
+    const message = models.length ? `已获取 ${models.length} 个模型` : "没有返回可用模型，可手动输入";
+    if (els.modelRefreshState) els.modelRefreshState.textContent = message;
+    log(`刷新模型列表：${message}`);
+  } catch (error) {
+    if (els.modelRefreshState) els.modelRefreshState.textContent = "刷新失败，可手动输入 model id";
+    showToast("模型列表刷新失败，可手动输入 model id");
+    log(`刷新模型列表失败：${error.message}`);
+  } finally {
+    if (els.refreshModelsButton) els.refreshModelsButton.disabled = false;
+  }
 }
 
 function requireApiKey(config) {
@@ -636,6 +826,10 @@ async function startTranslation() {
   const config = currentConfig();
   if (requireApiKey(config)) {
     showToast("当前服务商需要 API Key");
+    return;
+  }
+  if (config.provider !== "demo" && !config.model) {
+    showToast("请先刷新模型列表并选择模型，或手动输入 model id");
     return;
   }
   saveSettings();
@@ -690,6 +884,7 @@ function applyJob(job) {
   els.segmentCount.textContent = `${progress.done || 0}/${progress.total || 0} 完成 · ${progress.cached || 0} 缓存 · ${progress.failed || 0} 失败`;
   els.jobStatus.textContent = `${statusLabel(job.status)}${job.error ? `：${job.error}` : ""}`;
   els.targetPreviewBadge.textContent = statusLabel(job.status);
+  renderBilling(job.billing);
   renderTranslatedPreview();
   estimate();
   const active = job.status === "queued" || job.status === "running";
@@ -745,6 +940,10 @@ async function resumeJob() {
     showToast("继续真实模型任务需要重新填写 API Key");
     return;
   }
+  if (config.provider !== "demo" && !config.model) {
+    showToast("请先选择或手动输入 model id");
+    return;
+  }
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(state.jobId)}/resume`, {
       method: "POST",
@@ -764,6 +963,10 @@ async function retryFailedJob() {
   const config = currentConfig();
   if (requireApiKey(config)) {
     showToast("重试真实模型任务需要重新填写 API Key");
+    return;
+  }
+  if (config.provider !== "demo" && !config.model) {
+    showToast("请先选择或手动输入 model id");
     return;
   }
   try {
@@ -948,7 +1151,7 @@ function bindEvents() {
 
   [els.startChapter, els.endChapter, els.chunkSize, els.preserveParagraphs, els.provider].forEach((element) => {
     element.addEventListener("change", () => {
-      if (element === els.provider) setProviderDefaults(els.provider.value);
+      if (element === els.provider) applyProviderInfo(els.provider.value);
       updatePreview();
       saveSettings();
     });
@@ -969,6 +1172,24 @@ function bindEvents() {
   ].forEach((element) => {
     element.addEventListener("change", saveSettings);
   });
+
+  [els.model, els.baseUrl].forEach((element) => {
+    element.addEventListener("change", () => {
+      updatePricingInputsFromState();
+      estimate();
+      saveSettings();
+    });
+  });
+
+  [els.pricingInputPer1M, els.pricingCachedInputPer1M, els.pricingOutputPer1M].forEach((element) => {
+    element?.addEventListener("change", () => {
+      saveCurrentPricingOverride();
+      saveSettings();
+      estimate();
+    });
+  });
+
+  els.refreshModelsButton?.addEventListener("click", refreshModelList);
 
   els.selectAllChapters.addEventListener("click", () => {
     if (!state.book?.chapters?.length) return;
@@ -1098,13 +1319,15 @@ async function init() {
   loadSettings();
   bindEvents();
   renderPresetSelect();
+  renderModelList();
+  renderBilling();
   updateProgress(0);
   renderChapters();
   updatePreview();
   await refreshProjectList();
   await refreshCacheStats();
   log(`工作台已启动。当前页面 ${window.location.protocol === "file:" ? "通过 file:// 打开，API 将请求 http://localhost:4173" : "通过本地服务打开"}`);
-  log(providerDefaults[els.provider.value]?.note || "");
+  log(providerInfo[els.provider.value]?.note || "");
 }
 
 init();

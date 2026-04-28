@@ -457,6 +457,10 @@ a {
   font-weight: 800;
 }
 
+.settings-form label[for="model"] {
+  grid-column: 1 / 2;
+}
+
 select,
 .text-input,
 textarea {
@@ -492,8 +496,58 @@ textarea {
 .wide-field,
 .password-field,
 .range-field,
-.chapter-row {
+.chapter-row,
+.model-row,
+.pricing-settings {
   grid-column: 2 / 5;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-row small {
+  grid-column: 1 / 3;
+  color: var(--muted);
+}
+
+.pricing-settings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.pricing-title,
+.pricing-settings small {
+  grid-column: 1 / -1;
+}
+
+.pricing-title {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: #243041;
+}
+
+.pricing-title span,
+.pricing-settings small {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.pricing-settings label {
+  display: grid;
+  gap: 6px;
+  color: #243041;
+  font-size: 0.84rem;
+  font-weight: 800;
 }
 
 .range-field {
@@ -903,12 +957,20 @@ label:focus-within {
   .password-field,
   .range-field,
   .chapter-row,
+  .model-row,
+  .pricing-settings,
   .preset-textarea {
     grid-column: 1 / 2;
   }
 
-  .chapter-row {
+  .chapter-row,
+  .model-row,
+  .pricing-settings {
     grid-template-columns: 1fr;
+  }
+
+  .model-row small {
+    grid-column: 1 / 2;
   }
 
   .range-dash {

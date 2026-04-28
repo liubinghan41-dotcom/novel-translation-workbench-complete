@@ -9,6 +9,9 @@ const { buildCacheKey, getCachedTranslation, setCachedTranslation, cacheStats } 
 const { createJobManager } = require("./lib/jobs");
 const { buildPromptContext } = require("./lib/context-bank");
 const { parseGlossary, relevantTerms, formatGlossaryTerms } = require("./lib/glossary");
+const { defaultBaseUrl, fetchModels } = require("./lib/models");
+const { estimateTranslationCost } = require("./lib/pricing");
+const { emptyUsage, normalizeUsage } = require("./lib/usage");
 
 const PORT = Number(process.env.PORT || 4173);
 const MAX_BODY_BYTES = 120 * 1024 * 1024;
@@ -404,19 +407,23 @@ async function parseProviderResponse(provider, response) {
   }
   if (provider === "gemini") {
     const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
-    return { text, usage: data?.usageMetadata || null, raw: data };
+    const rawUsage = data?.usageMetadata || null;
+    return { text, usage: normalizeUsage(provider, rawUsage), rawUsage, raw: data };
   }
   if (provider === "claude") {
     const text = data?.content?.map((part) => part.text || "").join("") || "";
-    return { text, usage: data?.usage || null, raw: data };
+    const rawUsage = data?.usage || null;
+    return { text, usage: normalizeUsage(provider, rawUsage), rawUsage, raw: data };
   }
   const text = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
-  return { text, usage: data?.usage || null, raw: data };
+  const rawUsage = data?.usage || null;
+  return { text, usage: normalizeUsage(provider, rawUsage), rawUsage, raw: data };
 }
 
 async function translateSegment(payload) {
   const provider = payload.provider || "openai-compatible";
-  const model = payload.model || "gpt-4.1-mini";
+  let model = String(payload.model || "").trim();
+  if (provider === "gemini") model = model.replace(/^models\//, "");
   const temperature = Number(payload.temperature ?? payload.preset?.temperature ?? 0.35);
   const apiKey = payload.apiKey || "";
   const { system, user } = buildMessages(payload);
@@ -429,9 +436,15 @@ async function translateSegment(payload) {
         .filter(Boolean)
         .map((line) => `译：${line}`)
         .join("\n")}`,
-      usage: { mode: "demo" },
+      usage: emptyUsage({ mode: "demo" }),
       provider
     };
+  }
+
+  if (!model) {
+    const error = new Error("请先选择或手动输入 model id");
+    error.retryable = false;
+    throw error;
   }
 
   if (!globalThis.fetch) throw new Error("当前 Node 版本缺少 fetch，请使用 Node 18 或更新版本");
@@ -442,7 +455,7 @@ async function translateSegment(payload) {
       error.retryable = false;
       throw error;
     }
-    const baseUrl = payload.baseUrl || "https://generativelanguage.googleapis.com/v1beta";
+    const baseUrl = payload.baseUrl || defaultBaseUrl(provider);
     const url = `${joinUrl(baseUrl, `/models/${encodeURIComponent(model)}:generateContent`)}?key=${encodeURIComponent(apiKey)}`;
     const response = await fetch(url, {
       method: "POST",
@@ -462,7 +475,7 @@ async function translateSegment(payload) {
       error.retryable = false;
       throw error;
     }
-    const baseUrl = payload.baseUrl || "https://api.anthropic.com/v1";
+    const baseUrl = payload.baseUrl || defaultBaseUrl(provider);
     const response = await fetch(joinUrl(baseUrl, "/messages"), {
       method: "POST",
       headers: {
@@ -481,17 +494,12 @@ async function translateSegment(payload) {
     return { ...(await parseProviderResponse(provider, response)), provider };
   }
 
-  const defaults = {
-    openai: "https://api.openai.com/v1",
-    deepseek: "https://api.deepseek.com",
-    "openai-compatible": "http://localhost:11434/v1"
-  };
   if ((provider === "openai" || provider === "deepseek") && !apiKey) {
     const error = new Error(`${provider} 需要 API Key`);
     error.retryable = false;
     throw error;
   }
-  const baseUrl = payload.baseUrl || defaults[provider] || defaults["openai-compatible"];
+  const baseUrl = payload.baseUrl || defaultBaseUrl(provider) || defaultBaseUrl("openai-compatible");
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(joinUrl(baseUrl, "/chat/completions"), {
@@ -514,7 +522,14 @@ async function translateSegmentWithCache(payload) {
   const cacheKey = buildCacheKey(payload);
   if (payload.useCache !== false) {
     const cached = await getCachedTranslation(cacheKey);
-    if (cached) return { text: cached.text, usage: cached.usage || null, provider: payload.provider, cacheHit: true };
+    if (cached) {
+      return {
+        text: cached.text,
+        usage: normalizeUsage(payload.provider, cached.usage),
+        provider: payload.provider,
+        cacheHit: true
+      };
+    }
   }
   const translated = await translateSegment(payload);
   if (payload.useCache !== false && translated.text) await setCachedTranslation(cacheKey, payload, translated);
@@ -644,6 +659,16 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/parse-book") {
       sendJson(res, 200, parseBook(await readJson(req)));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/models") {
+      sendJson(res, 200, await fetchModels(await readJson(req)));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/estimate-cost") {
+      sendJson(res, 200, estimateTranslationCost(await readJson(req)));
       return;
     }
 
