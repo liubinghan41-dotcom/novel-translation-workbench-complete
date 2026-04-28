@@ -200,6 +200,13 @@ function currentPricingKey() {
   return `${els.provider.value}|${normalizeBaseUrl(els.baseUrl.value)}|${normalizeModelId(els.model.value)}`;
 }
 
+function normalizePricingOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry) => entry[1] && typeof entry[1] === "object" && !Array.isArray(entry[1]))
+  );
+}
+
 function readOptionalPrice(element) {
   const value = element?.value?.trim();
   if (!value) return null;
@@ -315,6 +322,7 @@ function estimate() {
 
 function updatePricingInputsFromState() {
   const key = currentPricingKey();
+  state.pricingOverrides = normalizePricingOverrides(state.pricingOverrides);
   const override = state.pricingOverrides[key] || {};
   if (els.pricingInputPer1M) els.pricingInputPer1M.value = override.inputPer1M ?? "";
   if (els.pricingCachedInputPer1M) els.pricingCachedInputPer1M.value = override.cachedInputPer1M ?? "";
@@ -617,7 +625,7 @@ function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem("novelTranslator.settings") || "{}");
     if (saved.pricingOverrides && typeof saved.pricingOverrides === "object") {
-      state.pricingOverrides = saved.pricingOverrides;
+      state.pricingOverrides = normalizePricingOverrides(saved.pricingOverrides);
     }
     for (const [key, value] of Object.entries(saved)) {
       if (!els[key] || key === "apiKey") continue;
@@ -684,7 +692,7 @@ function currentConfig() {
 
 function applySettings(settings = {}) {
   if (settings.pricingOverrides && typeof settings.pricingOverrides === "object") {
-    state.pricingOverrides = settings.pricingOverrides;
+    state.pricingOverrides = normalizePricingOverrides(settings.pricingOverrides);
   }
   if (Array.isArray(settings.contextBank)) {
     els.contextBank.value = serializeContextBank(settings.contextBank);
