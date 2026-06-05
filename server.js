@@ -129,6 +129,22 @@ function tryDecode(buffer) {
   return best;
 }
 
+function decodeMarkupBuffer(buffer) {
+  const head = buffer.slice(0, Math.min(buffer.length, 1024)).toString("ascii");
+  const declared = (head.match(/\bencoding\s*=\s*(["'])(.*?)\1/i) || head.match(/charset\s*=\s*(["']?)([^"'\s/>]+)/i))?.[2];
+  const label = String(declared || "").trim().toLowerCase().replace("_", "-");
+  if (label === "utf-8" || label === "utf8") return buffer.toString("utf8");
+  if (label === "utf-16" || label === "utf-16le") return new TextDecoder("utf-16le").decode(buffer);
+  if (label) {
+    try {
+      return new TextDecoder(label).decode(buffer);
+    } catch {
+      // Fall through to heuristic decoding for uncommon labels not present in this Node build.
+    }
+  }
+  return tryDecode(buffer).text;
+}
+
 function normalizeText(text) {
   return String(text || "")
     .replace(/\r\n/g, "\n")
@@ -191,7 +207,7 @@ function extractAttrs(tag) {
 }
 
 function extractHtmlText(htmlBuffer, fallbackTitle) {
-  const decoded = tryDecode(htmlBuffer).text;
+  const decoded = decodeMarkupBuffer(htmlBuffer);
   const titleMatch =
     decoded.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i) ||
     decoded.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
@@ -284,11 +300,21 @@ function parseEpub(buffer) {
       const html = entries.get(chapterPath);
       if (!html) return null;
       const parsed = extractHtmlText(html, `第 ${index + 1} 章`);
-      return { title: parsed.title || `第 ${index + 1} 章`, text: parsed.text, sourcePath: chapterPath };
+      return { title: parsed.title || `第 ${index + 1} 章`, text: parsed.text, sourcePath: chapterPath, epubSpineIndex: index };
     })
     .filter((chapter) => chapter && chapter.text);
   if (!chapters.length) throw new Error("EPUB 中没有可解析的 XHTML 章节");
-  return { title, chapters, metadata: { format: "epub", files: entries.size } };
+  return {
+    title,
+    chapters,
+    metadata: {
+      format: "epub",
+      files: entries.size,
+      originalEpubBase64: buffer.toString("base64"),
+      opfPath,
+      spineHtmlPaths: htmlPaths
+    }
+  };
 }
 
 function parseBook({ name, contentBase64 }) {
@@ -610,15 +636,150 @@ function createZip(files) {
   return Buffer.concat([...localParts, centralDir, eocd]);
 }
 
-function createEpub({ title, chapters }) {
+function stripDangerousAttrs(attrs) {
+  return String(attrs || "")
+    .replace(/\s(?:id|name)\s*=\s*(["']).*?\1/gi, "")
+    .replace(/\s(?:id|name)\s*=\s*[^\s>]+/gi, "");
+}
+
+function appendClass(attrs, className) {
+  const safeAttrs = stripDangerousAttrs(attrs);
+  if (/\sclass\s*=/i.test(safeAttrs)) {
+    return safeAttrs.replace(/(\sclass\s*=\s*)(["'])(.*?)\2/i, (_, prefix, quote, value) => {
+      const classes = String(value || "").split(/\s+/).filter(Boolean);
+      if (!classes.includes(className)) classes.push(className);
+      return `${prefix}${quote}${classes.join(" ")}${quote}`;
+    });
+  }
+  return `${safeAttrs} class="${className}"`;
+}
+
+function splitTranslatedParagraphs(text) {
+  return String(text || "")
+    .split(/\n{1,}/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function paragraphHtml(text, attrs = "") {
+  return `<p${appendClass(attrs, "ntw-translation")}>${xmlEscape(text).replace(/\n/g, "<br />")}</p>`;
+}
+
+function protectedRanges(body) {
+  const ranges = [];
+  const patterns = [
+    /<(aside|section|div)\b[^>]*(?:epub:type|class|id)\s*=\s*(["'])[^"']*(?:footnote|endnote|rearnote|note)[^"']*\2[^>]*>[\s\S]*?<\/\1>/gi,
+    /<(aside|section|div)\b[^>]*(?:epub:type|class|id)\s*=\s*[^\s>]*(?:footnote|endnote|rearnote|note)[^\s>]*[^>]*>[\s\S]*?<\/\1>/gi
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(body))) ranges.push([match.index, match.index + match[0].length]);
+  }
+  return ranges;
+}
+
+function inRanges(offset, ranges) {
+  return ranges.some(([start, end]) => offset >= start && offset < end);
+}
+
+function htmlText(value) {
+  return stripTags(String(value || "").replace(/<rt\b[\s\S]*?<\/rt>/gi, ""));
+}
+
+function shouldTranslateBlock(attrs, inner, offset, ranges) {
+  if (inRanges(offset, ranges)) return false;
+  if (/\b(?:epub:type|class|id)\s*=\s*(["'])[^"']*(?:footnote|endnote|rearnote|noteref|pagebreak|toc)[^"']*\1/i.test(attrs)) return false;
+  if (/\b(?:epub:type|class|id)\s*=\s*[^\s>]*(?:footnote|endnote|rearnote|noteref|pagebreak|toc)[^\s>]*/i.test(attrs)) return false;
+  return Boolean(htmlText(inner).trim());
+}
+
+function ensureExportStyle(xhtml, bilingual) {
+  const css = [
+    ".ntw-translation{margin-top:.15em;color:#1f2937;}",
+    bilingual ? ".ntw-source{margin-bottom:.15em;}" : "",
+    bilingual ? ".ntw-translation{border-left:2px solid #9ca3af;padding-left:.65em;}" : ""
+  ].filter(Boolean).join("");
+  const style = `<style type="text/css">${css}</style>`;
+  if (/<\/head>/i.test(xhtml)) return xhtml.replace(/<\/head>/i, `${style}</head>`);
+  return xhtml.replace(/<html\b([^>]*)>/i, `<html$1><head>${style}</head>`);
+}
+
+function transformChapterXhtml(rawHtml, chapter, options = {}) {
+  const rawBuffer = Buffer.isBuffer(rawHtml) ? rawHtml : Buffer.from(String(rawHtml), "utf8");
+  let xhtml = decodeMarkupBuffer(rawBuffer);
+  const translated = splitTranslatedParagraphs(chapter.text || chapter.translatedText || "");
+  if (!translated.length) return xhtml;
+
+  const bodyMatch = xhtml.match(/<body\b([^>]*)>([\s\S]*?)<\/body>/i);
+  if (!bodyMatch) return xhtml;
+  const bodyStart = bodyMatch.index + bodyMatch[0].indexOf(">") + 1;
+  const body = bodyMatch[2];
+  const ranges = protectedRanges(body);
+  let used = 0;
+  let changed = false;
+  const blockRe = /<(p|blockquote)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  const transformed = body.replace(blockRe, (full, tag, attrs, inner, offset) => {
+    if (!shouldTranslateBlock(attrs, inner, offset, ranges)) return full;
+    const translatedParagraph = translated[used++];
+    if (!translatedParagraph) return full;
+    changed = true;
+    if (options.bilingual) {
+      const source = `<${tag}${appendClass(attrs, "ntw-source")}>${inner}</${tag}>`;
+      return `${source}\n${paragraphHtml(translatedParagraph, attrs)}`;
+    }
+    return `<${tag}${attrs}>${xmlEscape(translatedParagraph).replace(/\n/g, "<br />")}</${tag}>`;
+  });
+  const extras = translated.slice(used).map((line) => paragraphHtml(line)).join("\n");
+  const nextBody = changed ? `${transformed}${extras ? `\n${extras}` : ""}` : `${body}\n${extras}`;
+  xhtml = `${xhtml.slice(0, bodyStart)}${nextBody}${xhtml.slice(bodyStart + body.length)}`;
+  return ensureExportStyle(xhtml, Boolean(options.bilingual));
+}
+
+function resolveChapterSourcePath(payloadChapter, book, index) {
+  if (payloadChapter?.sourcePath) return payloadChapter.sourcePath;
+  const originalIndex = Number(payloadChapter?.originalIndex ?? payloadChapter?.chapterIndex ?? index);
+  return book?.chapters?.[originalIndex]?.sourcePath || book?.metadata?.spineHtmlPaths?.[index] || "";
+}
+
+function createPreservedEpub(payload) {
+  const book = payload.book || {};
+  const sourceBase64 = book.metadata?.originalEpubBase64;
+  if (!sourceBase64) return null;
+  const entries = readZipEntries(Buffer.from(sourceBase64, "base64"));
+  const chapterMap = new Map();
+  (payload.chapters || []).forEach((chapter, index) => {
+    const sourcePath = resolveChapterSourcePath(chapter, book, index);
+    if (sourcePath) chapterMap.set(sourcePath.replace(/\\/g, "/"), chapter);
+  });
+  if (!chapterMap.size) return null;
+
+  const files = [];
+  const mimetype = entries.get("mimetype") || Buffer.from("application/epub+zip", "utf8");
+  files.push({ name: "mimetype", data: mimetype });
+
+  for (const [name, data] of entries) {
+    if (name === "mimetype") continue;
+    const chapter = chapterMap.get(name);
+    const output = chapter ? Buffer.from(transformChapterXhtml(data, chapter, { bilingual: payload.bilingual }), "utf8") : data;
+    files.push({ name, data: output });
+  }
+  return createZip(files);
+}
+
+function createSimpleEpub({ title, chapters, bilingual }) {
   const safeTitle = xmlEscape(title || "translated-novel");
   const chapterFiles = (chapters || []).map((chapter, index) => {
-    const paragraphs = String(chapter.text || "")
-      .split(/\n{1,}/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => `<p>${xmlEscape(line)}</p>`)
-      .join("\n");
+    const translated = splitTranslatedParagraphs(chapter.text || chapter.translatedText || "");
+    const source = splitTranslatedParagraphs(chapter.sourceText || "");
+    const paragraphs = bilingual && source.length
+      ? [
+          ...source.map((line, lineIndex) => [
+            `<p class="ntw-source">${xmlEscape(line)}</p>`,
+            translated[lineIndex] ? `<p class="ntw-translation">${xmlEscape(translated[lineIndex])}</p>` : ""
+          ].filter(Boolean).join("\n")),
+          ...translated.slice(source.length).map((line) => `<p class="ntw-translation">${xmlEscape(line)}</p>`)
+        ].filter(Boolean).join("\n")
+      : translated.map((line) => `<p class="ntw-translation">${xmlEscape(line)}</p>`).join("\n");
     const chapterTitle = chapter.title || `第 ${index + 1} 章`;
     return {
       name: `OEBPS/chapters/chapter-${index + 1}.xhtml`,
@@ -648,6 +809,14 @@ function createEpub({ title, chapters }) {
     },
     ...chapterFiles
   ]);
+}
+
+function createEpub(payload) {
+  if (payload.book?.metadata?.format === "epub") {
+    const preserved = createPreservedEpub(payload);
+    if (preserved) return preserved;
+  }
+  return createSimpleEpub(payload);
 }
 
 async function handleApi(req, res, pathname) {

@@ -59,6 +59,7 @@ const els = {
   importProjectInput: $("#importProjectInput"),
   exportTxtButton: $("#exportTxtButton"),
   exportEpubButton: $("#exportEpubButton"),
+  bilingualEpub: $("#bilingualEpub"),
   presetSelect: $("#presetSelect"),
   presetName: $("#presetName"),
   presetTemperature: $("#presetTemperature"),
@@ -684,6 +685,7 @@ function currentConfig() {
     },
     preserveParagraphs: els.preserveParagraphs.checked,
     useCache: els.useCache.checked,
+    bilingualEpub: Boolean(els.bilingualEpub?.checked),
     maxRetries: Math.max(0, Math.min(8, Number(els.maxRetries.value || 2))),
     chunkSize: Math.max(600, Number(els.chunkSize.value || 1800)),
     preset: activePreset()
@@ -1104,15 +1106,26 @@ async function exportEpub() {
     showToast("请先完成至少一个章节的翻译");
     return;
   }
+  const exportChapters = state.results.map((chapter, index) => {
+    const originalIndex = Number(chapter.originalIndex ?? chapter.chapterIndex ?? index);
+    const sourceChapter = state.book?.chapters?.[originalIndex] || {};
+    return {
+      title: chapter.title || sourceChapter.title,
+      originalIndex,
+      sourcePath: chapter.sourcePath || sourceChapter.sourcePath || "",
+      epubSpineIndex: chapter.epubSpineIndex ?? sourceChapter.epubSpineIndex,
+      sourceText: chapter.sourceText || sourceChapter.text || "",
+      text: chapter.translatedText || chapter.text || ""
+    };
+  });
   const response = await fetch(`${API_BASE}/api/export-epub`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       title: `${state.book?.title || "translated-novel"} - 译文`,
-      chapters: state.results.map((chapter) => ({
-        title: chapter.title,
-        text: chapter.translatedText
-      }))
+      book: state.book,
+      bilingual: Boolean(els.bilingualEpub?.checked),
+      chapters: exportChapters
     })
   });
   if (!response.ok) {
@@ -1120,7 +1133,8 @@ async function exportEpub() {
     throw new Error(error.error || response.statusText);
   }
   const blob = await response.blob();
-  downloadBlob(blob, `${state.book?.title || "translated-novel"}-译文.epub`);
+  const suffix = els.bilingualEpub?.checked ? "双语译文" : "译文";
+  downloadBlob(blob, `${state.book?.title || "translated-novel"}-${suffix}.epub`);
   log("已导出 EPUB");
 }
 
@@ -1168,9 +1182,10 @@ function bindEvents() {
     els.maxRetries,
     els.glossaryLimit,
     els.retrievalCount,
-    els.useCache
+    els.useCache,
+    els.bilingualEpub
   ].forEach((element) => {
-    element.addEventListener("change", saveSettings);
+    element?.addEventListener("change", saveSettings);
   });
 
   [els.model, els.baseUrl].forEach((element) => {

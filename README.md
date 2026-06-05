@@ -9,6 +9,8 @@ Local-first novel translation workbench for TXT and EPUB files. It is designed f
 - Resumable background translation jobs
 - Pause, resume, and retry failed segments
 - Translation cache keyed by source text, model, prompt, glossary, context, and settings
+- Provider model discovery with manual model fallback
+- Token-based cost estimates and actual billing aggregation from API usage
 - Project save / load / import / export
 - Prompt presets, including JSON preset import
 - Structured glossary parsing and per-segment glossary injection
@@ -16,7 +18,7 @@ Local-first novel translation workbench for TXT and EPUB files. It is designed f
 - Automatic QA checks for empty output, likely omissions, paragraph drift, repeated output, and glossary misses
 - Lightweight chapter summaries
 - Glossary-driven consistency checks
-- TXT and simple EPUB export
+- TXT and EPUB export, including preserved EPUB structure and optional bilingual EPUB output
 - Zero npm runtime dependencies
 
 ## Quick Start
@@ -36,6 +38,16 @@ Run syntax checks:
 ```bash
 npm run check
 ```
+
+Build release packages:
+
+```bash
+npm run package:release
+```
+
+This creates Windows portable, Android Termux, and source packages under `release/vX.Y.Z/`, with SHA-256 checksum files.
+
+Note: the Android package is a Termux-based release because the workbench depends on a local Node.js backend for parsing, jobs, cache, and provider API calls. A standalone APK would require a separate Android runtime/backend port.
 
 ## Data Storage
 

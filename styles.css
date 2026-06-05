@@ -260,6 +260,10 @@ a {
   gap: 12px;
 }
 
+.action-stack .export-option {
+  min-height: 46px;
+}
+
 .preset-panel {
   grid-column: span 6;
 }
