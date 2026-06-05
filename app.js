@@ -753,7 +753,14 @@ async function parseFile(file) {
   }
 }
 
-function downloadBlob(blob, filename) {
+async function downloadBlob(blob, filename) {
+  if (window.NTWNative?.saveBlob) {
+    try {
+      if (await window.NTWNative.saveBlob(blob, filename)) return;
+    } catch (error) {
+      log(`Native save failed: ${error.message}`);
+    }
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

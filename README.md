@@ -43,11 +43,12 @@ Build release packages:
 
 ```bash
 npm run package:release
+npm run package:apk
 ```
 
-This creates Windows portable, Android Termux, and source packages under `release/vX.Y.Z/`, with SHA-256 checksum files.
+This creates Windows portable, Android APK, Android Termux, and source packages under `release/vX.Y.Z/`, with SHA-256 checksum files.
 
-Note: the Android package is a Termux-based release because the workbench depends on a local Node.js backend for parsing, jobs, cache, and provider API calls. A standalone APK would require a separate Android runtime/backend port.
+The APK uses a Capacitor WebView shell plus `native-adapter.js`, which maps the local `/api/*` routes to browser/Capacitor-side implementations for parsing, jobs, cache, billing, model refresh, and EPUB export.
 
 ## Data Storage
 

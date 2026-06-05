@@ -1,11 +1,16 @@
 data/
 node_modules/
+.playwright-cli/
 .env
 .env.*
 *.pem
 *.key
 *.p12
 *.pfx
+*.jks
+*.keystore
+*.apk
+*.apk.idsig
 .npmrc
 .yarnrc
 .pnpmrc

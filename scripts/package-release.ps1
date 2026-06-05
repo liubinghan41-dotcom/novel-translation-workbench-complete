@@ -26,6 +26,7 @@ $AppFiles = @(
   "README.md",
   "app.js",
   "index.html",
+  "native-adapter.js",
   "styles.css",
   "server.js",
   "package.json"
@@ -187,10 +188,11 @@ $ReleaseNotes = @"
 ## Assets
 
 - novel-translation-workbench-windows-portable-v$Version.zip
+- Novel-Translation-Workbench-$Version-android-release.apk
 - novel-translation-workbench-android-termux-v$Version.zip
 - novel-translation-workbench-source-v$Version.zip
 
-The Android asset is a Termux package, not an APK, because the current app architecture depends on the local Node.js backend.
+The APK uses the Capacitor shell from the earlier Android release and replaces its web assets with the current native-adapter build. The Termux package remains available as a fallback for users who prefer the Node.js backend directly.
 "@
 [System.IO.File]::WriteAllText((Join-Path $ReleaseRoot "RELEASE_NOTES.md"), $ReleaseNotes, $Utf8NoBom)
 
