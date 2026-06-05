@@ -58,6 +58,51 @@ The workbench supports:
 - Claude
 - Demo offline mode for testing workflows
 
+## Packaging
+
+Build and test the web bundle:
+
+```bash
+npm run check
+npm run test:unit
+npm run build:web
+```
+
+Build Windows release assets:
+
+```bash
+npm run build:desktop:win
+```
+
+This writes an NSIS installer and a portable executable to `release/windows/`.
+The first public Windows build is intentionally unsigned; Windows SmartScreen may show an unknown-publisher warning until a code-signing certificate is added.
+
+Build Android assets:
+
+```bash
+npm run build:android
+```
+
+The Android script runs the Vite build, syncs Capacitor, then runs Gradle. Without signing environment variables it builds a debug APK for local validation. In CI, release signing uses:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+The Android app is standalone: it uses the shared browser-compatible core and Capacitor storage instead of starting a local Node server.
+
+## GitHub Release
+
+Push a version tag to publish the first release:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow builds Windows installer/portable assets, a signed Android APK, `SHA256SUMS.txt`, and publishes them with generated release notes.
+
 ## License
 
 This project is source-available for non-commercial use under the PolyForm Noncommercial License 1.0.0.

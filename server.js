@@ -4,13 +4,6 @@ const path = require("path");
 const zlib = require("zlib");
 const { TextDecoder } = require("util");
 
-const { ROOT_DIR, initStorage, listProjects, getProject, saveProject } = require("./lib/storage");
-const { buildCacheKey, getCachedTranslation, setCachedTranslation, cacheStats } = require("./lib/cache");
-const { createJobManager } = require("./lib/jobs");
-const { buildPromptContext } = require("./lib/context-bank");
-const { parseGlossary, relevantTerms, formatGlossaryTerms } = require("./lib/glossary");
-
-const PORT = Number(process.env.PORT || 4173);
 const MAX_BODY_BYTES = 120 * 1024 * 1024;
 
 const MIME_TYPES = {
@@ -28,7 +21,53 @@ const MIME_TYPES = {
 const DEFAULT_PROMPT =
   "你是专业文学翻译。请把{{sourceLanguage}}小说翻译为{{targetLanguage}}，保持人物称呼、段落结构和叙事语气一致。只输出译文，不要解释。";
 
+let ROOT_DIR;
+let initStorage;
+let listProjects;
+let getProject;
+let saveProject;
+let buildCacheKey;
+let getCachedTranslation;
+let setCachedTranslation;
+let cacheStats;
+let createJobManager;
+let buildPromptContext;
+let parseGlossary;
+let relevantTerms;
+let formatGlossaryTerms;
 let jobManager;
+let corePromise;
+
+function loadRuntime(options = {}) {
+  if (options.dataDir) process.env.NTW_DATA_DIR = path.resolve(options.dataDir);
+  if (initStorage) return;
+
+  const storage = require("./lib/storage");
+  const cache = require("./lib/cache");
+  const jobs = require("./lib/jobs");
+  const contextBank = require("./lib/context-bank");
+  const glossary = require("./lib/glossary");
+
+  ROOT_DIR = storage.ROOT_DIR;
+  initStorage = storage.initStorage;
+  listProjects = storage.listProjects;
+  getProject = storage.getProject;
+  saveProject = storage.saveProject;
+  buildCacheKey = cache.buildCacheKey;
+  getCachedTranslation = cache.getCachedTranslation;
+  setCachedTranslation = cache.setCachedTranslation;
+  cacheStats = cache.cacheStats;
+  createJobManager = jobs.createJobManager;
+  buildPromptContext = contextBank.buildPromptContext;
+  parseGlossary = glossary.parseGlossary;
+  relevantTerms = glossary.relevantTerms;
+  formatGlossaryTerms = glossary.formatGlossaryTerms;
+}
+
+function loadCore() {
+  if (!corePromise) corePromise = import("./src/core/book.mjs");
+  return corePromise;
+}
 
 function corsHeaders(res) {
   const origin = res._requestOrigin;
@@ -86,11 +125,11 @@ async function readJson(req) {
   return JSON.parse(raw.toString("utf8"));
 }
 
-function serveStatic(req, res) {
+function serveStatic(req, res, staticDir = ROOT_DIR) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const safePath = decodeURIComponent(url.pathname).replace(/^\/+/, "") || "index.html";
-  const filePath = path.resolve(ROOT_DIR, safePath);
-  if (!filePath.startsWith(ROOT_DIR)) {
+  const filePath = path.resolve(staticDir, safePath);
+  if (!filePath.startsWith(staticDir)) {
     sendError(res, 403, "禁止访问工作区外文件");
     return;
   }
@@ -643,7 +682,8 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === "POST" && pathname === "/api/parse-book") {
-      sendJson(res, 200, parseBook(await readJson(req)));
+      const core = await loadCore();
+      sendJson(res, 200, core.parseBook(await readJson(req)));
       return;
     }
 
@@ -659,7 +699,8 @@ async function handleApi(req, res, pathname) {
 
     if (req.method === "POST" && pathname === "/api/export-epub") {
       const payload = await readJson(req);
-      const epub = createEpub(payload);
+      const core = await loadCore();
+      const epub = Buffer.from(core.createEpub(payload));
       const filename = encodeURIComponent(`${payload.title || "translated-novel"}.epub`);
       res.writeHead(200, {
         "Content-Type": "application/epub+zip",
@@ -742,31 +783,54 @@ async function handleApi(req, res, pathname) {
   }
 }
 
-const server = http.createServer((req, res) => {
-  res._requestOrigin = req.headers.origin;
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, { ...corsHeaders(res) });
-    res.end();
-    return;
-  }
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  if (url.pathname.startsWith("/api/")) {
-    handleApi(req, res, url.pathname);
-    return;
-  }
-  serveStatic(req, res);
-});
+function createServer(options = {}) {
+  loadRuntime(options);
+  const port = Number(options.port ?? process.env.PORT ?? 4173);
+  const staticDir = path.resolve(options.staticDir || ROOT_DIR);
+  const server = http.createServer((req, res) => {
+    res._requestOrigin = req.headers.origin;
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, { ...corsHeaders(res) });
+      res.end();
+      return;
+    }
+    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (url.pathname.startsWith("/api/")) {
+      handleApi(req, res, url.pathname);
+      return;
+    }
+    serveStatic(req, res, staticDir);
+  });
 
-async function start() {
-  await initStorage();
-  jobManager = createJobManager({ translateSegment, chunkText });
-  await jobManager.markInterruptedOnStartup();
-  server.listen(PORT, () => {
-    console.log(`Novel Translator Workbench running at http://localhost:${PORT}`);
+  async function start() {
+    const core = await loadCore();
+    await initStorage();
+    jobManager = createJobManager({ translateSegment, chunkText: core.chunkText });
+    await jobManager.markInterruptedOnStartup();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    return {
+      server,
+      port: typeof address === "object" && address ? address.port : port,
+      url: `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`
+    };
+  }
+
+  return { server, start };
+}
+
+if (require.main === module) {
+  createServer().start().then(({ url }) => {
+    console.log(`Novel Translator Workbench running at ${url}`);
+  }).catch((error) => {
+    console.error(error);
+    process.exit(1);
   });
 }
 
-start().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+module.exports = {
+  createServer
+};

@@ -3,12 +3,34 @@
   "version": "0.2.0",
   "private": true,
   "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+  "author": "liubinghan41-dotcom",
   "description": "Local EPUB/TXT novel translation workbench with resumable jobs, retries, cache, and project persistence.",
+  "main": "electron/main.cjs",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check app.js && node --check lib/storage.js && node --check lib/cache.js && node --check lib/jobs.js && node --check lib/glossary.js && node --check lib/context-bank.js && node --check lib/qa.js && node --check lib/summaries.js"
+    "dev": "vite --host 127.0.0.1",
+    "check": "node --check server.js && node --check src/renderer/app.mjs && node --check src/core/book.mjs && node --check src/platform/http-api.mjs && node --check src/platform/local-api.mjs && node --check src/platform/index.mjs && node --check electron/main.cjs && node --check scripts/build-android.cjs && node --check scripts/checksums.cjs && node --check lib/storage.js && node --check lib/cache.js && node --check lib/jobs.js && node --check lib/glossary.js && node --check lib/context-bank.js && node --check lib/qa.js && node --check lib/summaries.js",
+    "test:unit": "node --test test/*.test.mjs",
+    "build:web": "vite build",
+    "build:desktop:win": "npm run build:web && electron-builder --win nsis portable --x64",
+    "build:android": "node scripts/build-android.cjs",
+    "release:checksums": "node scripts/checksums.cjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
+    "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
+    "electron": "^42.3.3",
+    "electron-builder": "^24.6.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
   }
 }

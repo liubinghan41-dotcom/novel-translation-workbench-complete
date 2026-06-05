@@ -1,4 +1,6 @@
-const API_BASE = window.location.protocol === "file:" ? "http://localhost:4173" : "";
+import { createPlatformApi } from "../platform/index.mjs";
+
+const platformApi = createPlatformApi();
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -176,17 +178,7 @@ function uid(prefix = "id") {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
-  if (!response.ok) throw new Error(data.error || data.detail || response.statusText);
-  return data;
+  return platformApi.request(path, options);
 }
 
 function arrayBufferToBase64(buffer) {
@@ -603,7 +595,11 @@ async function parseFile(file) {
   }
 }
 
-function downloadBlob(blob, filename) {
+async function downloadBlob(blob, filename) {
+  if (platformApi.saveBlob) {
+    await platformApi.saveBlob(blob, filename);
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -901,7 +897,7 @@ async function exportEpub() {
     showToast("请先完成至少一个章节的翻译");
     return;
   }
-  const response = await fetch(`${API_BASE}/api/export-epub`, {
+  const blob = await platformApi.requestBlob("/api/export-epub", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -912,11 +908,6 @@ async function exportEpub() {
       }))
     })
   });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error || response.statusText);
-  }
-  const blob = await response.blob();
   downloadBlob(blob, `${state.book?.title || "translated-novel"}-译文.epub`);
   log("已导出 EPUB");
 }

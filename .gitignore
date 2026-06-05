@@ -2,9 +2,11 @@ data/
 node_modules/
 .env
 .env.*
+.local-signing/
 *.log
 server.out.log
 server.err.log
 dist/
+release/
 exports/
 *.epub.tmp

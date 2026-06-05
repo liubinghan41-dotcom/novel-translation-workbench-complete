@@ -1,0 +1,34 @@
+appId: com.liubinghan.noveltranslationworkbench
+productName: Novel Translation Workbench
+copyright: Copyright (c) 2026
+directories:
+  output: release/windows
+files:
+  - dist/**/*
+  - electron/**/*
+  - lib/**/*
+  - src/core/**/*
+  - server.js
+  - package.json
+  - LICENSE
+  - NOTICE
+asar: true
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: Novel-Translation-Workbench-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  license: LICENSE
+portable:
+  artifactName: Novel-Translation-Workbench-${version}-portable-${arch}.${ext}
